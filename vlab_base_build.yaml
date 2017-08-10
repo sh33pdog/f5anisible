@@ -1,0 +1,140 @@
+- name: vLab Base Config
+  hosts: vlab
+  connection: local
+  environment:
+    F5_SERVER: "{{ inventory_hostname }}"
+    F5_USER: "admin"
+    F5_PASSWORD: "admin"
+    F5_VALIDATE_CERTS: "false"
+    F5_SERVER_PORT: 443
+
+  tasks:
+
+# Turn off first time auto setup
+  - name: Mark setup as having been run so it doesn't display that on login
+    bigip_command:
+      commands: modify sys db setup.run value false
+    delegate_to: 'localhost'
+
+# Create VLANs 
+  - name: Create External VLAN
+    bigip_vlan:
+      name: "external_vlan"
+      untagged_interfaces: 1.1
+    delegate_to: "localhost"
+
+  - name: Create Internal VLAN
+    bigip_vlan:
+      name: "internal_vlan"
+      untagged_interfaces: 1.2
+    delegate_to: "localhost"
+
+# Create Self IPs 
+  - name: Create External Self IP
+    bigip_selfip:
+      address: "10.1.10.130"
+      name: "external_selfip"
+      netmask: "255.255.255.0"
+      vlan: "external_vlan"
+      allow_service:
+        - "all"
+    delegate_to: "localhost"
+  
+  - name: Create Internal Self IP
+    bigip_selfip:
+      address: "10.1.20.130"
+      name: "internal_selfip"
+      netmask: "255.255.255.0"  
+      vlan: "internal_vlan"
+      allow_service:
+        - "all"
+    delegate_to: "localhost"
+
+# Create lab nodes
+  - name: Create DVWA Node
+    bigip_node:
+      host: "10.1.20.11"
+      name: "dvwa_node"
+      validate_certs: "no"
+      state: "present"
+    delegate_to: "localhost"
+
+  - name: Create Hackazon Node
+    bigip_node:
+      host: "10.1.20.12"
+      name: "hackazon_node"
+      validate_certs: "no"
+      state: "present"
+    delegate_to: "localhost"
+
+
+# Create lab pools
+  - name: Create DVWA Pool
+    bigip_pool:
+      state: "present"
+      name: "dvwa_pool"
+      monitors:
+            - /Common/gateway_icmp
+    delegate_to: localhost
+
+  - name: Create Hackazon Pool
+    bigip_pool:
+      state: "present"
+      name: "hackazon_pool"
+      monitors:
+            - /Common/gateway_icmp
+    delegate_to: localhost
+
+# Create lab pools
+  - name: Add DVWA pool member to dvwa_pool
+    bigip_pool_member:
+      state: "present"
+      pool: "dvwa_pool"
+      host: "dvwa_node"
+      port: 80
+      description: "pool for dvwa lab server on LAMP"
+    delegate_to: "localhost"
+
+  - name: Add Hackazon pool member to hackazon_pool
+    bigip_pool_member:
+      state: "present"
+      pool: "hackazon_pool"
+      host: "hackazon_node"
+      port: 80
+      description: "pool for hackazon lab server on LAMP"
+    delegate_to: "localhost"
+
+
+# Create lab virtual servers
+  - name: Create DVWA virtual server
+    bigip_virtual_server:
+      state: "present"
+      partition: "Common"
+      name: "dvwa_vs"
+      destination: "10.1.10.11"
+      port: 80
+      pool: "dvwa_pool"
+      snat: "Automap"
+      all_profiles:
+            - http
+    delegate_to: "localhost"
+
+  - name: Create Hackazon virtual server
+    bigip_virtual_server:
+      state: "present"
+      partition: "Common"
+      name: "hackazon_vs"
+      destination: "10.1.10.12"
+      port: 80
+      pool: "hackazon_pool"
+      snat: "Automap"
+      all_profiles:
+            - http
+    delegate_to: "localhost"
+
+# Save config
+  - name: Save sys config
+    bigip_config:
+      merge_content:
+      save: "yes"
+    delegate_to: "localhost"  
